@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net"
@@ -91,38 +92,36 @@ func (fwd *Forward) OnSelectRemote(cb OnToHandlerFunc) {
 	fwd.remoteHandler = cb
 }
 
-func (fwd *Forward) Forward(req *http.Request) error {
-	// read client request from socket
-	// Here we can check for proxy authentication
-	// and others headers sent like X-PROXIFIER-
-	// then, we NEED to remove those header to
-	// send only clean headers
-	err := fwd.readRequest(req)
+func (fwd *Forward) Forward() error {
+	err := fwd.readRequest()
 	if err != nil {
 		log.Print(err)
 		fwd.createErrorResponse(500, []byte("Failed to read sent request."))
 		return err
 	}
 
-	// check for Ratelimited user acccess
 	if fwd.user != nil && fwd.user.IsConnected() {
 		fwd.rate, fwd.reset, fwd.allowed = fwd.user.Limit()
-		if fwd.allowed == false {
+		if !fwd.allowed {
 			fwd.createErrorResponse(400, []byte("User rate limits exceeded."))
 			return errors.New("User rate limits exceeded.")
 		}
 	}
 
+	if fwd.request.Method == http.MethodConnect {
+		return fwd.forwardTunnel()
+	}
+
 	err = nil
-	// Forward the request to select proxy remote
-	// and get the according response
 	for fwd.maxRetry > 0 {
 		err = fwd.forward()
+		log.Println("forwarding")
 		if err == nil {
 			break
 		}
 		fwd.maxRetry--
 	}
+
 	if err != nil {
 		fmt.Println("HERE")
 		fwd.createErrorResponse(500, []byte(err.Error()))
@@ -193,7 +192,7 @@ func (fwd *Forward) forward() error {
 	// Forward request to remote proxy host.
 	err = fwd.request.WriteProxy(fwd.remoteConn)
 	if err != nil {
-		fmt.Println("WriteProxy?")
+		fmt.Println("WriteProxy?", err)
 		return err
 	}
 
@@ -206,10 +205,51 @@ func (fwd *Forward) forward() error {
 	//   4/5xx -> Check for error and retry
 	err = fwd.readResponse(fwd.remoteConn)
 	if err != nil {
-		fmt.Println("ReadResponse?")
+		fmt.Println("ReadResponse?", err)
 		return err
 	}
 	return nil
+}
+
+func (fwd *Forward) forwardTunnel() (err error) {
+	// Handle the CONNECT request for HTTPS
+	// Establish a tunnel between the client and the destination server
+
+	fwd.remoteConn, err = fwd.getRemoteConn(10 * time.Second)
+	if err != nil {
+		log.Printf("Error connecting to destination server: %v", err)
+		return err
+	}
+
+	err = fwd.request.WriteProxy(fwd.remoteConn)
+	if err != nil {
+		fmt.Println("WriteProxy?", err)
+		return err
+	}
+	log.Println(fwd.remoteConn, fwd.conn)
+
+	// // Respond to the client that the tunnel has been established
+	// _, err = fwd.conn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
+	// if err != nil {
+	// 	return err
+	// }
+
+	// Relay data between the client and the destination server
+	go func() {
+		_, err := io.Copy(fwd.remoteConn, fwd.conn)
+		if err != nil {
+			log.Printf("Error copying data to remote server: %v", err)
+		}
+	}()
+
+	_, err = io.Copy(fwd.conn, fwd.remoteConn)
+	if err != nil {
+		log.Printf("Error copying data to client: %v", err)
+	}
+
+	log.Printf("here")
+
+	return err
 }
 
 // func (fwd *Forward) authenticate() error {
@@ -239,7 +279,11 @@ func (fwd *Forward) forward() error {
 // 	return nil
 // }
 
-func (fwd *Forward) readRequest(req *http.Request) error {
+func (fwd *Forward) readRequest() error {
+	req, err := http.ReadRequest(bufio.NewReader(fwd.conn))
+	if err != nil {
+		return err
+	}
 	fwd.request = req
 
 	dump, err := httputil.DumpRequest(fwd.request, false)
