@@ -1,4 +1,4 @@
-package main
+package forward
 
 import (
 	"bufio"
@@ -251,33 +251,6 @@ func (fwd *Forward) forwardTunnel() (err error) {
 
 	return err
 }
-
-// func (fwd *Forward) authenticate() error {
-// 	if fwd.authHandler == nil {
-// 		return nil
-// 	}
-
-// 	username, password, ok := fwd.ProxyBasicAuth()
-// 	if ok == false {
-// 		return errors.New("No authentication header found.")
-// 	}
-
-// 	_user, err := fwd.authHandler(fwd.request, username, password)
-// 	if _user == nil {
-// 		return errors.New("Returned nil user during authentication")
-// 	}
-
-// 	if err != nil {
-// 		return err
-// 	}
-
-// 	if _user.IsConnected() == false {
-// 		return errors.New("Failed to log user in. No user found.")
-// 	}
-
-// 	fwd.user = _user
-// 	return nil
-// }
 
 func (fwd *Forward) readRequest() error {
 	req, err := http.ReadRequest(bufio.NewReader(fwd.conn))
