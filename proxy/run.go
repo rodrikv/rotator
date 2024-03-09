@@ -11,11 +11,11 @@ import (
 	"github.com/Kawaii-Konnections-KK-Limited/Hayasashiken/run"
 )
 
-var testurl = "https://www.google.com/"
-var timeout int32 = 10000
+var testurl = "http://cp.cloudflare.com/"
+var timeout int32 = 2000
 var baseBroadcast = "127.0.0.1"
-var upperBoundPingLimit int32 = 10000
-var ports []int
+var upperBoundPingLimit int32 = 2000
+var Ports []int
 
 func RunPingTest(ctx context.Context, pairs []string, ps *[]int, finished chan bool) {
 	ctx, cancel := context.WithCancel(ctx)
@@ -43,11 +43,12 @@ func RunPingTest(ctx context.Context, pairs []string, ps *[]int, finished chan b
 			return
 		default:
 			if !returned && len(pairs) == counts {
-				fmt.Println(ports)
+				fmt.Println(Ports)
 				finished <- true
 				returned = true
+				ps = &Ports
 			}
-			if returned && len(ports) == 0 {
+			if returned && len(Ports) == 0 {
 				finished <- true
 				fmt.Println("all tested nothing works")
 				return
@@ -65,7 +66,7 @@ func start(link *string, port int, ctx context.Context, counts *int) {
 	if r < upperBoundPingLimit && r != 0 {
 		*counts++
 		fmt.Println(r)
-		ports = append(ports, port)
+		Ports = append(Ports, port)
 	} else {
 		kills <- true
 		*counts++

@@ -33,8 +33,10 @@ func main() {
 
 	log.Println("finished pinging")
 
-	for _, port := range ports {
-		err := pm.AddProxy("http://127.0.0.1:" + fmt.Sprint(port))
+	fmt.Println(proxy.Ports)
+
+	for _, port := range proxy.Ports {
+		err := pm.AddProxy("127.0.0.1:" + fmt.Sprint(port))
 		if err != nil {
 			log.Println("error", err)
 		}

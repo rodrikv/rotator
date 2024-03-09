@@ -13,6 +13,7 @@ import (
 	"net/http/httputil"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
@@ -95,7 +96,9 @@ func (fwd *Forward) OnSelectRemote(cb OnToHandlerFunc) {
 func (fwd *Forward) Forward() error {
 	err := fwd.readRequest()
 	if err != nil {
-		log.Print(err)
+		if strings.HasPrefix(err.Error(), "malformed HTTP") {
+			return fwd.forwardTunnel()
+		}
 		fwd.createErrorResponse(500, []byte("Failed to read sent request."))
 		return err
 	}
@@ -223,29 +226,45 @@ func (fwd *Forward) forwardTunnel() (err error) {
 
 	err = fwd.request.WriteProxy(fwd.remoteConn)
 	if err != nil {
-		fmt.Println("WriteProxy?", err)
+		log.Println("WriteProxy?", err)
 		return err
 	}
-	log.Println(fwd.remoteConn, fwd.conn)
 
-	// // Respond to the client that the tunnel has been established
-	// _, err = fwd.conn.Write([]byte("HTTP/1.1 200 Connection established\r\n\r\n"))
-	// if err != nil {
-	// 	return err
-	// }
+	log.Println(fwd.remoteConn.RemoteAddr(), fwd.conn.RemoteAddr())
 
-	// Relay data between the client and the destination server
+	// Respond to the client that the tunnel has been established
+	_, err = fwd.conn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
+	if err != nil {
+		return err
+	}
+
+	var wg sync.WaitGroup
+	wg.Add(2) // Wait for two goroutines to finish copying
+
+	// Relay data from client to destination server
+
+	// Relay data from destination server to client
 	go func() {
+		defer wg.Done()
+		_, err := io.Copy(fwd.conn, fwd.remoteConn)
+		if err != nil {
+			log.Printf("Error copying data to client: %v", err)
+		}
+
+		log.Printf("end of coping data from %s to %s", fwd.remoteConn.RemoteAddr().String(), fwd.conn.RemoteAddr().String())
+	}()
+
+	go func() {
+		defer wg.Done()
 		_, err := io.Copy(fwd.remoteConn, fwd.conn)
 		if err != nil {
 			log.Printf("Error copying data to remote server: %v", err)
 		}
-	}()
 
-	_, err = io.Copy(fwd.conn, fwd.remoteConn)
-	if err != nil {
-		log.Printf("Error copying data to client: %v", err)
-	}
+		log.Printf("end of coping data from %s to %s", fwd.conn.RemoteAddr().String(), fwd.remoteConn.RemoteAddr().String())
+	}()
+	// Wait for both copying operations to finish
+	wg.Wait()
 
 	log.Printf("here")
 
@@ -253,7 +272,9 @@ func (fwd *Forward) forwardTunnel() (err error) {
 }
 
 func (fwd *Forward) readRequest() error {
-	req, err := http.ReadRequest(bufio.NewReader(fwd.conn))
+	reader := bufio.NewReader(fwd.conn)
+
+	req, err := http.ReadRequest(reader)
 	if err != nil {
 		return err
 	}
