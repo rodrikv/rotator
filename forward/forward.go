@@ -3,6 +3,7 @@ package forward
 import (
 	"bufio"
 	"bytes"
+	"context"
 	"errors"
 	"fmt"
 	"io"
@@ -93,69 +94,106 @@ func (fwd *Forward) OnSelectRemote(cb OnToHandlerFunc) {
 	fwd.remoteHandler = cb
 }
 
-func (fwd *Forward) Forward() error {
-	err := fwd.readRequest()
-	if err != nil {
-		if strings.HasPrefix(err.Error(), "malformed HTTP") {
-			return fwd.forwardTunnel()
-		}
-		fwd.createErrorResponse(500, []byte("Failed to read sent request."))
-		return err
-	}
+func (fwd *Forward) Forward(ctx context.Context) (err error) {
+	return fwd.fastForward(ctx)
+}
 
-	if fwd.user != nil && fwd.user.IsConnected() {
-		fwd.rate, fwd.reset, fwd.allowed = fwd.user.Limit()
-		if !fwd.allowed {
-			fwd.createErrorResponse(400, []byte("User rate limits exceeded."))
-			return errors.New("User rate limits exceeded.")
-		}
-	}
+func (fwd *Forward) fastForward(ctx context.Context) (err error) {
+	fwd.remoteConn, err = fwd.getRemoteConn(30 * time.Second)
 
-	if fwd.request.Method == http.MethodConnect {
-		return fwd.forwardTunnel()
-	}
+	var wg sync.WaitGroup
+	wg.Add(1)
 
-	err = nil
-	for fwd.maxRetry > 0 {
-		err = fwd.forward()
-		log.Println("forwarding")
-		if err == nil {
-			break
-		}
-		fwd.maxRetry--
-	}
+	done := make(chan struct{}, 2)
+	connClosed := make(chan net.Conn, 2)
 
-	if err != nil {
-		fmt.Println("HERE")
-		fwd.createErrorResponse(500, []byte(err.Error()))
-		return err
-	}
-
-	defer func() {
-		if fwd.remoteConn != nil {
-			fwd.remoteConn.Close()
-		}
+	go func() {
+		defer wg.Done()
+		copyData(ctx, fwd.conn, fwd.remoteConn, done, connClosed)
 	}()
 
-	// Send request and response to callbacks
-	// The user can manage request and response
-	// before they are sent back.
-	for _, cb := range fwd.httpHandler {
-		err = cb(fwd.response, fwd.request)
-		if err != nil {
-			fmt.Println("On Response Handler err")
-			return err
-		}
+	go func() {
+		defer wg.Done()
+		copyData(ctx, fwd.remoteConn, fwd.conn, done, connClosed)
+	}()
+
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+
+	select {
+	case <-done:
+		// Both goroutines have finished
+	case <-ctx.Done():
+		// Context was canceled
 	}
 
-	// Send back remote proxy host response to initial
-	// client.
-	err = fwd.response.Write(fwd.conn)
+	// err := fwd.readRequest()
+	// if err != nil {
+	// 	if strings.HasPrefix(err.Error(), "malformed HTTP") {
+	// 		return fwd.forwardTunnel()
+	// 	}
+	// 	fwd.createErrorResponse(500, []byte("Failed to read sent request."))
+	// 	return err
+	// }
 
-	if err != nil {
-		fmt.Println("Error Writing")
-	}
-	return err
+	// if fwd.user != nil && fwd.user.IsConnected() {
+	// 	fwd.rate, fwd.reset, fwd.allowed = fwd.user.Limit()
+	// 	if !fwd.allowed {
+	// 		fwd.createErrorResponse(400, []byte("User rate limits exceeded."))
+	// 		return errors.New("User rate limits exceeded.")
+	// 	}
+	// }
+
+	// err = nil
+	// for fwd.maxRetry > 0 {
+	// 	err = fwd.forward()
+	// 	log.Println("forwarding")
+	// 	if err == nil {
+	// 		break
+	// 	}
+	// 	fwd.maxRetry--
+	// }
+
+	// if err != nil {
+	// 	fmt.Println("HERE")
+	// 	fwd.createErrorResponse(500, []byte(err.Error()))
+	// 	return err
+	// }
+
+	// defer func() {
+	// 	if fwd.remoteConn != nil {
+	// 		fwd.remoteConn.Close()
+	// 	}
+	// }()
+
+	// // Send request and response to callbacks
+	// // The user can manage request and response
+	// // before they are sent back.
+	// for _, cb := range fwd.httpHandler {
+	// 	err = cb(fwd.response, fwd.request)
+	// 	if err != nil {
+	// 		fmt.Println("On Response Handler err")
+	// 		return err
+	// 	}
+	// }
+
+	// // Send back remote proxy host response to initial
+	// // client.
+	// err = fwd.response.Write(fwd.conn)
+	// if err != nil {
+	// 	fmt.Println("Error Writing")
+	// }
+	// if fwd.request.Method == http.MethodConnect {
+	// 	log.Println(fwd.remoteConn, fwd.conn)
+	// 	return fwd.forwardTunnel()
+	// }
+	// return err
+
+	log.Print("client connection: ", fwd.conn.RemoteAddr(), " remote connection: ", fwd.remoteConn.RemoteAddr())
+
+	return nil
 }
 
 func (fwd *Forward) getRemoteConn(timeout time.Duration) (net.Conn, error) {
@@ -218,11 +256,11 @@ func (fwd *Forward) forwardTunnel() (err error) {
 	// Handle the CONNECT request for HTTPS
 	// Establish a tunnel between the client and the destination server
 
-	fwd.remoteConn, err = fwd.getRemoteConn(10 * time.Second)
-	if err != nil {
-		log.Printf("Error connecting to destination server: %v", err)
-		return err
-	}
+	// fwd.remoteConn, err = fwd.getRemoteConn(10 * time.Second)
+	// if err != nil {
+	// 	log.Printf("Error connecting to destination server: %v", err)
+	// 	return err
+	// }
 
 	err = fwd.request.WriteProxy(fwd.remoteConn)
 	if err != nil {
@@ -233,15 +271,24 @@ func (fwd *Forward) forwardTunnel() (err error) {
 	log.Println(fwd.remoteConn.RemoteAddr(), fwd.conn.RemoteAddr())
 
 	// Respond to the client that the tunnel has been established
-	_, err = fwd.conn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
-	if err != nil {
-		return err
-	}
+	// _, err = fwd.conn.Write([]byte("HTTP/1.0 200 Connection established\r\n\r\n"))
+	// if err != nil {
+	// 	return err
+	// }
 
 	var wg sync.WaitGroup
 	wg.Add(2) // Wait for two goroutines to finish copying
 
 	// Relay data from client to destination server
+	go func() {
+		defer wg.Done()
+		_, err := io.Copy(fwd.remoteConn, fwd.conn)
+		if err != nil {
+			log.Printf("Error copying data to remote server: %v", err)
+		}
+
+		log.Printf("end of coping data from %s to %s", fwd.conn.RemoteAddr().String(), fwd.remoteConn.RemoteAddr().String())
+	}()
 
 	// Relay data from destination server to client
 	go func() {
@@ -254,21 +301,55 @@ func (fwd *Forward) forwardTunnel() (err error) {
 		log.Printf("end of coping data from %s to %s", fwd.remoteConn.RemoteAddr().String(), fwd.conn.RemoteAddr().String())
 	}()
 
-	go func() {
-		defer wg.Done()
-		_, err := io.Copy(fwd.remoteConn, fwd.conn)
-		if err != nil {
-			log.Printf("Error copying data to remote server: %v", err)
-		}
-
-		log.Printf("end of coping data from %s to %s", fwd.conn.RemoteAddr().String(), fwd.remoteConn.RemoteAddr().String())
-	}()
 	// Wait for both copying operations to finish
 	wg.Wait()
 
 	log.Printf("here")
 
 	return err
+}
+
+func copyData(ctx context.Context, src, dst net.Conn, done chan<- struct{}, connClosed chan<- net.Conn) {
+	defer func() {
+		src.Close()
+		connClosed <- src
+	}()
+
+	defer func() {
+		dst.Close()
+		connClosed <- dst
+	}()
+
+	var mu sync.Mutex
+	closed := false
+
+	go func() {
+		<-ctx.Done()
+		mu.Lock()
+		if !closed {
+			closed = true
+			src.Close()
+			dst.Close()
+		}
+		mu.Unlock()
+	}()
+
+	_, err := io.Copy(dst, src)
+	mu.Lock()
+	defer mu.Unlock()
+	if err != nil && !closed {
+		if err == io.ErrClosedPipe {
+			// The other end of the connection has been closed,
+			// so we can gracefully exit without logging an error.
+			closed = true
+			return
+		}
+		log.Printf("Error copying data: %v", err)
+		// You could try to send the error back to the handleConnection function
+		// or take other appropriate actions
+	}
+
+	done <- struct{}{}
 }
 
 func (fwd *Forward) readRequest() error {
@@ -361,11 +442,11 @@ func (fwd *Forward) readResponse(remote net.Conn) error {
 		fwd.log.Printf("Response :\n%v", string(dump))
 	}
 
-	fwd.remoteConn, err = fwd.filterResponse()
-	if err != nil {
-		fmt.Println("FilterResponse")
-		return err
-	}
+	// fwd.remoteConn, err = fwd.filterResponse()
+	// if err != nil {
+	// 	fmt.Println("FilterResponse")
+	// 	return err
+	// }
 	return nil
 }
 

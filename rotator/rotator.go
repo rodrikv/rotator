@@ -47,13 +47,16 @@ func (r *Rotator) Start(ctx context.Context) {
 	}
 
 	log.Printf("listening on %s\n", addr.String())
-	listener, err := net.ListenTCP("tcp", addr)
+	listener, err := net.Listen("tcp", addr.String())
 	if err != nil {
 		log.Fatal(err)
 	}
 
 	for {
 		conn, err := listener.Accept()
+
+		log.Printf("log accepted from %s", conn.RemoteAddr())
+
 		log.Println(err)
 		if err != nil {
 			select {
@@ -84,7 +87,7 @@ func (r *Rotator) handleConnection(ctx context.Context, conn net.Conn, pm *proxy
 		return pm, nil
 	})
 
-	err = fwd.Forward()
+	err = fwd.Forward(ctx)
 	if err != nil {
 		log.Print("Error:", err)
 	}
