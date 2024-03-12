@@ -12,9 +12,9 @@ import (
 )
 
 var testurl = "https://www.google.com/"
-var timeout int32 = 10000
+var timeout int32 = 5000
 var baseBroadcast = "127.0.0.1"
-var upperBoundPingLimit int32 = 10000
+var upperBoundPingLimit int32 = 5000
 var Ports []int
 
 func RunPingTest(ctx context.Context, pairs []string, ps *[]int, finished chan bool) {
