@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"log"
 
@@ -14,13 +15,19 @@ func main() {
 
 	pm := proxy.NewProxyManager()
 
-	notTestedProxies, err := proxy.ProxyFromFile("proxies.txt")
+	linksFile := flag.String("l", "proxies.txt", "path to the file containing the proxies")
+	port := flag.Int("p", 9000, "port to listen on")
+	host := flag.String("h", "127.0.0.1", "host to listen on")
+
+	flag.Parse()
+
+	notTestedProxies, err := proxy.ProxyFromFile(*linksFile)
 
 	if err != nil {
 		log.Panic(err)
 	}
 
-	r := rotator.NewRotator(9000, "127.0.0.1", pm)
+	r := rotator.NewRotator(*port, *host, pm)
 
 	finished := make(chan bool)
 
