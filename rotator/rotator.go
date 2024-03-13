@@ -33,13 +33,6 @@ func (r *Rotator) Start(ctx context.Context) {
 	defer cancel()
 
 	// Handle SIGINT to cancel the context
-	go func() {
-		sigCh := make(chan os.Signal, 1)
-		signal.Notify(sigCh, os.Interrupt, syscall.SIGINT)
-		<-sigCh
-		log.Println("Received SIGINT. Shutting down...")
-		cancel()
-	}()
 
 	addr, err := net.ResolveTCPAddr("tcp", r.host+":"+strconv.Itoa(r.port))
 	if err != nil {
@@ -47,15 +40,25 @@ func (r *Rotator) Start(ctx context.Context) {
 	}
 
 	log.Printf("listening on %s\n", addr.String())
-	listener, err := net.Listen("tcp", addr.String())
+	n := net.ListenConfig{}
+
+	// listener, err := net.Listen("tcp", addr.String())
+	listener, err := n.Listen(ctx, "tcp", addr.String())
 	if err != nil {
 		log.Fatal(err)
 	}
 
+	go func() {
+		sigCh := make(chan os.Signal, 1)
+		signal.Notify(sigCh, os.Interrupt, syscall.SIGINT)
+		<-sigCh
+		log.Println("Received SIGINT. Shutting down...")
+		cancel()
+		listener.Close()
+	}()
+
 	for {
 		conn, err := listener.Accept()
-
-		log.Printf("log accepted from %s", conn.RemoteAddr())
 
 		log.Println(err)
 		if err != nil {
@@ -67,6 +70,8 @@ func (r *Rotator) Start(ctx context.Context) {
 				log.Println("Error accepting connection:", err)
 			}
 		}
+
+		log.Printf("log accepted from %s", conn.RemoteAddr())
 
 		go r.handleConnection(ctx, conn, r.proxyManager)
 	}
