@@ -43,3 +43,7 @@ func (p *ProxyManager) GetRemoteAddr() (*net.TCPAddr, error) {
 	p.current = (p.current + 1) % uint64(len(p.proxies))
 	return p.proxies[p.current], nil
 }
+
+func (p *ProxyManager) ClearProxies() {
+	p.proxies = make([]*net.TCPAddr, 0)
+}
