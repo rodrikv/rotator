@@ -311,11 +311,19 @@ func (fwd *Forward) forwardTunnel() (err error) {
 
 func copyData(ctx context.Context, src, dst net.Conn, done chan<- struct{}, connClosed chan<- net.Conn) {
 	defer func() {
+		if src == nil {
+			return
+		}
+
 		src.Close()
 		connClosed <- src
 	}()
 
 	defer func() {
+		if dst == nil {
+			return
+		}
+
 		dst.Close()
 		connClosed <- dst
 	}()
