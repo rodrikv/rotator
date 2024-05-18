@@ -342,6 +342,10 @@ func copyData(ctx context.Context, src, dst net.Conn, done chan<- struct{}, conn
 		mu.Unlock()
 	}()
 
+	if src == nil || dst == nil {
+		return	
+	}
+
 	_, err := io.Copy(dst, src)
 	mu.Lock()
 	defer mu.Unlock()
