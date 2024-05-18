@@ -102,7 +102,7 @@ func (fwd *Forward) fastForward(ctx context.Context) (err error) {
 	fwd.remoteConn, err = fwd.getRemoteConn(30 * time.Second)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
+	wg.Add(2)
 
 	done := make(chan struct{}, 2)
 	connClosed := make(chan net.Conn, 2)
@@ -191,7 +191,7 @@ func (fwd *Forward) fastForward(ctx context.Context) (err error) {
 	// }
 	// return err
 
-	log.Print("client connection: ", fwd.conn.RemoteAddr(), " remote connection: ", fwd.remoteConn.RemoteAddr())
+	// log.Print("client connection: ", fwd.conn.RemoteAddr(), " remote connection: ", fwd.remoteConn.RemoteAddr())
 
 	return nil
 }
