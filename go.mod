@@ -1,6 +1,6 @@
 module github.com/rodrikv/rotator
 
-go 1.21.1
+go 1.21
 
 require github.com/Kawaii-Konnections-KK-Limited/Hayasashiken v0.0.0-20230916165614-c22b9610b17f
 
